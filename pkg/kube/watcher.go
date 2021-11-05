@@ -13,15 +13,18 @@ import (
 
 type EventHandler func(event *EnhancedEvent)
 
+type EventChecker func(event *EnhancedEvent) bool
+
 type EventWatcher struct {
 	informer        cache.SharedInformer
 	stopper         chan struct{}
 	labelCache      *LabelCache
 	annotationCache *AnnotationCache
 	fn              EventHandler
+	checker         EventChecker
 }
 
-func NewEventWatcher(config *rest.Config, namespace string, fn EventHandler) *EventWatcher {
+func NewEventWatcher(config *rest.Config, namespace string, fn EventHandler, checker EventChecker) *EventWatcher {
 	clientset := kubernetes.NewForConfigOrDie(config)
 	factory := informers.NewSharedInformerFactoryWithOptions(clientset, 0, informers.WithNamespace(namespace))
 	informer := factory.Core().V1().Events().Informer()
@@ -32,6 +35,7 @@ func NewEventWatcher(config *rest.Config, namespace string, fn EventHandler) *Ev
 		labelCache:      NewLabelCache(config),
 		annotationCache: NewAnnotationCache(config),
 		fn:              fn,
+		checker:         checker,
 	}
 
 	informer.AddEventHandler(watcher)
@@ -66,6 +70,20 @@ func (e *EventWatcher) onEvent(event *corev1.Event) {
 	ev := &EnhancedEvent{
 		Event: *event.DeepCopy(),
 	}
+	ev.InvolvedObject.ObjectReference = *event.InvolvedObject.DeepCopy()
+
+	// Check to see if we need to process this event, if we don't then skip processing the event to avoid unnecessary
+	// errors (specifically RBAC rules associated with objects we don't have permission to)
+	shouldProcess := e.checker(ev)
+	if !shouldProcess {
+		log.Debug().
+			Str("msg", event.Message).
+			Str("namespace", event.Namespace).
+			Str("reason", event.Reason).
+			Str("involvedObject", event.InvolvedObject.Name).
+			Msg("No rules matched, stopped processing")
+		return
+	}
 
 	labels, err := e.labelCache.GetLabelsWithCache(&event.InvolvedObject)
 	if err != nil {
@@ -73,7 +91,6 @@ func (e *EventWatcher) onEvent(event *corev1.Event) {
 		// Ignoring error, but log it anyways
 	} else {
 		ev.InvolvedObject.Labels = labels
-		ev.InvolvedObject.ObjectReference = *event.InvolvedObject.DeepCopy()
 	}
 
 	annotations, err := e.annotationCache.GetAnnotationsWithCache(&event.InvolvedObject)
@@ -81,7 +98,6 @@ func (e *EventWatcher) onEvent(event *corev1.Event) {
 		log.Error().Err(err).Msg("Cannot list annotations of the object")
 	} else {
 		ev.InvolvedObject.Annotations = annotations
-		ev.InvolvedObject.ObjectReference = *event.InvolvedObject.DeepCopy()
 	}
 
 	e.fn(ev)

@@ -63,7 +63,7 @@ func main() {
 	}
 
 	engine := exporter.NewEngine(&cfg, &exporter.ChannelBasedReceiverRegistry{})
-	w := kube.NewEventWatcher(kubeconfig, cfg.Namespace, engine.OnEvent)
+	w := kube.NewEventWatcher(kubeconfig, cfg.Namespace, engine.OnEvent, engine.OnCheck)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	leaderLost := make(chan bool)

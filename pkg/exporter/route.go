@@ -11,11 +11,13 @@ type Route struct {
 	Routes []Route
 }
 
-func (r *Route) ProcessEvent(ev *kube.EnhancedEvent, registry ReceiverRegistry) {
+func (r *Route) FindMatchedRules(ev *kube.EnhancedEvent) (bool, []Rule) {
+	var matchedRules []Rule
+
 	// First determine whether we will drop the event: If any of the drop is matched, we break the loop
 	for _, v := range r.Drop {
 		if v.MatchesEvent(ev) {
-			return
+			return false, matchedRules
 		}
 	}
 
@@ -24,12 +26,22 @@ func (r *Route) ProcessEvent(ev *kube.EnhancedEvent, registry ReceiverRegistry) 
 	for _, rule := range r.Match {
 		if rule.MatchesEvent(ev) {
 			if rule.Receiver != "" {
-				registry.SendEvent(rule.Receiver, ev)
+				matchedRules = append(matchedRules, rule)
 				// Send the event down the hole
 			}
 		} else {
 			matchesAll = false
 		}
+	}
+
+	return matchesAll, matchedRules
+}
+
+func (r *Route) ProcessEvent(ev *kube.EnhancedEvent, registry ReceiverRegistry) {
+	matchesAll, matchedRules := r.FindMatchedRules(ev)
+
+	for _, rule := range matchedRules {
+		registry.SendEvent(rule.Receiver, ev)
 	}
 
 	// If all matches are satisfied, we can send them down to the rabbit hole
