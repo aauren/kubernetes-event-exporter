@@ -49,7 +49,11 @@ func (r *ChannelBasedReceiverRegistry) Register(name string, receiver sinks.Sink
 	r.wg.Add(1)
 
 	go func() {
-	Loop:
+		defer func() {
+			receiver.Close()
+			log.Info().Str("sink", name).Msg("Closed")
+			r.wg.Done()
+		}()
 		for {
 			select {
 			case ev := <-ch:
@@ -60,12 +64,9 @@ func (r *ChannelBasedReceiverRegistry) Register(name string, receiver sinks.Sink
 				}
 			case <-exitCh:
 				log.Info().Str("sink", name).Msg("Closing the sink")
-				break Loop
+				return
 			}
 		}
-		receiver.Close()
-		log.Info().Str("sink", name).Msg("Closed")
-		r.wg.Done()
 	}()
 }
 
